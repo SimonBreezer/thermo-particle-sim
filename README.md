@@ -7,7 +7,7 @@ Traditional sims are power-hungry. Thermodynamic computing uses noise for probab
 
 ## How to Run
 1. Install dependencies: `pip install -r requirements.txt`
-2. Run: `python particle_sim.py`
+2. Run: `python particle_sim_2d.py`
 
 ## Demo
-Watch particles form crystals! [Add GIF here after running]
+Watch particles interact!

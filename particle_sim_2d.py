@@ -8,9 +8,9 @@ from thrml import SpinNode, Block, SamplingSchedule, sample_states
 from thrml.models import IsingEBM, IsingSamplingProgram, hinton_init
 
 # === SETTINGS ===
-grid_size = 70          # bigger = more epic crystals
+grid_size = 70          # 70x70 = 4900 particles
 num_frames = 150        # length of GIF
-temperature = 1.5       # 0.4 = slow freezing, 1.2 = wild chaos
+temperature = 4       # lower = more order, higher = more chaos
 
 print("Starting REAL thermodynamic simulation on your GPU...")
 
@@ -28,7 +28,7 @@ for i in range(grid_size):
 
 # === PHYSICS: attraction/repulsion ===
 weights = jnp.ones(len(edges)) * -0.85  # Flipped: negative for opposite attract (blue-red patterns)
-biases = jnp.zeros(grid_size * grid_size)
+biases = jnp.full(grid_size * grid_size, -0.3)  # Slight negative bias for more -1 spins (electrons)
 beta = 1.0 / temperature
 
 all_nodes = [node for row in nodes for node in row]
@@ -41,7 +41,7 @@ model = IsingEBM(
 )
 
 # === BLOCK GIBBS: update entire rows at once = 70x faster on GPU! ===
-free_blocks = [Block([nodes[i][j] for j in range(grid_size)]) for i in range(grid_size)]
+free_blocks = [Block(all_nodes)]  # Changed to single block to avoid sorting error on Block objects
 program = IsingSamplingProgram(model, free_blocks, clamped_blocks=[])
 
 # === INITIAL HOT CHAOS ===
@@ -53,7 +53,7 @@ init_state = hinton_init(k_init, model, free_blocks, ())
 schedule = SamplingSchedule(
     n_warmup=40,
     n_samples=num_frames,
-    steps_per_sample=5   # 5 sweeps per frame = smooth physics
+    steps_per_sample=10   # Increase for smoother evolution
 )
 
 # === RUN SIMULATION ===
@@ -63,7 +63,7 @@ samples_list = sample_states(
     schedule,
     init_state,
     state_clamp=[],
-    nodes_to_sample=[Block(all_nodes)]
+    nodes_to_sample=free_blocks  # Use free_blocks (single block)
 )
 
 # === MAKE GIF ===
@@ -72,6 +72,7 @@ states = np.array(samples_list[0])
 
 for t in range(num_frames):
     frame = states[t].reshape(grid_size, grid_size)
+    frame = frame.astype(np.float32)
     
     # Colors: -1 = electron (blue), +1 = proton (red), 0 = neutron/empty (green swirl)
     rgb = np.zeros((grid_size, grid_size, 3))
@@ -80,8 +81,19 @@ for t in range(num_frames):
     rgb[frame ==  0] = [0.1, 0.8, 0.2]    # emerald neutron clusters
     
     # Add glow effect
-    rgb = np.clip(rgb + 0.3 * (np.abs(frame)[:, :, None]), 0, 1)
+    rgb = np.clip(rgb + 0.1 * (np.abs(frame)[:, :, None]), 0, 1)
+
+    # New: Color gradients and overlay for "energy fields" (blend based on neighbor counts)
+    # Compute energy as sum of abs differences with neighbors (higher = brighter edges/fields)
+    energy = np.zeros((grid_size, grid_size))
+    for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        shifted = np.roll(frame, shift=(di, dj), axis=(0, 1))
+        energy += np.abs(frame - shifted)
+    energy /= 4.0  # Normalize (max 4 neighbors)
     
+    # Blend energy into RGB intensity (gradient overlay: brighter for high-energy spots)
+    rgb = np.clip(rgb * (1 + 0.8 * energy[:, :, None]), 0, 1)
+
     rgb = (rgb * 255).astype(np.uint8)
     frames.append(rgb)
 
