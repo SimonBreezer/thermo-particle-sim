@@ -11,4 +11,5 @@ Traditional sims are power-hungry. Thermodynamic computing uses noise for probab
 
 ## Demo
 Watch particles interact!
+
 ![Thermodynamic Particle Simulation](REAL_thermodynamic_physics.gif)
