@@ -10,9 +10,9 @@ from thrml.models import IsingEBM, IsingSamplingProgram, hinton_init
 # === SETTINGS ===
 grid_size = 70          # 70x70 = 4900 particles
 num_frames = 150        # length of GIF
-temperature = 4       # lower = more order, higher = more chaos
+temperature = 2.5       # lower = more order, higher = more chaos
 
-print("Starting REAL thermodynamic simulation on your GPU...")
+print("Starting thermodynamic simulation on your GPU...")
 
 # === BUILD 2D GRID OF PARTICLES ===
 nodes = [[SpinNode() for _ in range(grid_size)] for _ in range(grid_size)]
@@ -28,7 +28,7 @@ for i in range(grid_size):
 
 # === PHYSICS: attraction/repulsion ===
 weights = jnp.ones(len(edges)) * -0.85  # Flipped: negative for opposite attract (blue-red patterns)
-biases = jnp.full(grid_size * grid_size, -0.3)  # Slight negative bias for more -1 spins (electrons)
+biases = jnp.full(grid_size * grid_size, -5)  # Strong negative bias to force -1 spins (electrons)
 beta = 1.0 / temperature
 
 all_nodes = [node for row in nodes for node in row]
@@ -41,13 +41,17 @@ model = IsingEBM(
 )
 
 # === BLOCK GIBBS: update entire rows at once = 70x faster on GPU! ===
-free_blocks = [Block(all_nodes)]  # Changed to single block to avoid sorting error on Block objects
+free_blocks = [Block([nodes[i][j] for j in range(grid_size)]) for i in range(grid_size)]  # Row blocks fix pytree
 program = IsingSamplingProgram(model, free_blocks, clamped_blocks=[])
 
 # === INITIAL HOT CHAOS ===
-key = jax.random.key(42)
+key = jax.random.key(69420)
 k_init, k_sample = jax.random.split(key)
 init_state = hinton_init(k_init, model, free_blocks, ())
+
+# Force 70% -1 spins in init_state to ensure electrons appear
+for i in range(len(free_blocks)):
+    init_state[i] = jnp.where(jax.random.uniform(key, (grid_size,)) < 0.7, -1.0, 1.0).astype(jnp.bool_)
 
 # === SAMPLING SCHEDULE ===
 schedule = SamplingSchedule(
@@ -63,7 +67,7 @@ samples_list = sample_states(
     schedule,
     init_state,
     state_clamp=[],
-    nodes_to_sample=free_blocks  # Use free_blocks (single block)
+    nodes_to_sample=[Block(all_nodes)]
 )
 
 # === MAKE GIF ===
@@ -74,11 +78,10 @@ for t in range(num_frames):
     frame = states[t].reshape(grid_size, grid_size)
     frame = frame.astype(np.float32)
     
-    # Colors: -1 = electron (blue), +1 = proton (red), 0 = neutron/empty (green swirl)
+# Colors: -1 = electron (blue), +1 = proton (red); removed 0 mapping (Ising is ±1 only, no neutrons)
     rgb = np.zeros((grid_size, grid_size, 3))
     rgb[frame == -1] = [0.1, 0.3, 1.0]    # electric blue
     rgb[frame ==  1] = [1.0, 0.2, 0.3]    # fiery red
-    rgb[frame ==  0] = [0.1, 0.8, 0.2]    # emerald neutron clusters
     
     # Add glow effect
     rgb = np.clip(rgb + 0.1 * (np.abs(frame)[:, :, None]), 0, 1)
